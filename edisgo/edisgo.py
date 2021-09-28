@@ -1336,17 +1336,17 @@ class EDisGo:
                 use_case = kwargs.get("use_case", None)
                 if use_case is None:
                     raise ValueError(
-                        ("Unsupported voltage level."
-                        "Max supported nominal power is 17.5 MW."
-                        f"The actual component {comp_type} has a"
-                        f"nominal power of {p_nom}."))
+                        ("Unsupported voltage level. "
+                         "Max supported nominal power is 17.5 MW. "
+                         f"The actual component {comp_type} has a "
+                         f"nominal power of {p_nom}."))
                 else:
                     raise ValueError(
-                        ("Unsupported voltage level."
-                        "Max supported nominal power is 17.5 MW."
-                        f"The actual component {comp_type} with"
-                        f"use case {use_case} has a"
-                        f"nominal power of {p_nom}."))
+                        ("Unsupported voltage level. "
+                         "Max supported nominal power is 17.5 MW. "
+                         f"The actual component {comp_type} with "
+                         f"use case {use_case} has a "
+                         f"nominal power of {p_nom}."))
 
         # check if geolocation is given as shapely Point, otherwise transform
         # to shapely Point
@@ -1497,6 +1497,8 @@ def import_edisgo_from_files(directory="", import_topology=True,
                              import_electromobility=False, **kwargs):
     edisgo_obj = EDisGo(import_timeseries=False)
 
+    dtype = kwargs.get("dtype", None)
+
     if import_topology:
         topology_dir = kwargs.get("topology_directory",
                                   os.path.join(directory, "topology"))
@@ -1508,7 +1510,8 @@ def import_edisgo_from_files(directory="", import_topology=True,
 
     if import_timeseries:
         if os.path.exists(os.path.join(directory, "timeseries")):
-            edisgo_obj.timeseries.from_csv(os.path.join(directory, "timeseries"))
+            edisgo_obj.timeseries.from_csv(
+                os.path.join(directory, "timeseries"), dtype=dtype)
         else:
             logging.warning(
                 'No timeseries directory found. Timeseries not imported.')
@@ -1517,7 +1520,7 @@ def import_edisgo_from_files(directory="", import_topology=True,
         parameters = kwargs.get('parameters', None)
         if os.path.exists(os.path.join(directory, "results")):
             edisgo_obj.results.from_csv(os.path.join(directory, "results"),
-                                        parameters)
+                                        parameters, dtype=dtype)
         else:
             logging.warning('No results directory found. Results not imported.')
 

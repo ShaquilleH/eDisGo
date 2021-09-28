@@ -802,9 +802,7 @@ class Results:
             setattr(
                 self,
                 attr,
-                getattr(self, attr).apply(
-                    lambda _: _.astype(to_type)
-                )
+                getattr(self, attr).astype(to_type)
             )
 
     def to_csv(self, directory, parameters=None, reduce_memory=False,
@@ -1025,7 +1023,7 @@ class Results:
             ]
             writer.writerows(rows)
 
-    def from_csv(self, directory, parameters=None):
+    def from_csv(self, directory, parameters=None, dtype=None):
         """
         Restores results from csv files.
 
@@ -1081,11 +1079,25 @@ class Results:
                             '{}.csv'.format(power_flow_results_dict[attr])
                         )
                 if os.path.exists(path):
-                    setattr(
-                        self,
-                        attr,
-                        pd.read_csv(path, index_col=0, parse_dates=True)
-                    )
+                    if dtype is None:
+                        setattr(
+                            self,
+                            attr,
+                            pd.read_csv(
+                                path, index_col=0, parse_dates=True)
+                        )
+                    else:
+                        df = pd.read_csv(
+                            path, index_col=0, parse_dates=True, nrows=0)
+
+                        dtypes = {col: dtype for col in df.columns}
+
+                        setattr(
+                            self,
+                            attr,
+                            pd.read_csv(
+                                path, index_col=0, parse_dates=True, dtype=dtypes)
+                        )
 
         # import grid expansion results
         if 'grid_expansion_results' in list(parameters.keys()) and \

@@ -1241,9 +1241,8 @@ class PotentialChargingParks(BasicComponent):
                 Total gross designated charging park capacity
 
         """
-        return round(self._edisgo_obj.electromobility.charging_processes_df.loc[
-                         self._edisgo_obj.electromobility.charging_processes_df.charging_park_id == self._id
-                         ].drop_duplicates(subset=["car_id"]).netto_charging_capacity.sum() / \
+        return round(self.charging_processes_df.
+                     groupby("charging_point_id").max().netto_charging_capacity.sum() /
                      self._edisgo_obj.electromobility.eta_charging_points, 1)
 
     @property
@@ -1324,7 +1323,10 @@ class PotentialChargingParks(BasicComponent):
 
     @property
     def grid_connection_capacity(self):
-        return determine_grid_connection_capacity(self.designated_charging_point_capacity / 10 ** 3)
+        if self.use_case == "hpc":
+            return self.designated_charging_point_capacity / 10**3
+        else:
+            return determine_grid_connection_capacity(self.designated_charging_point_capacity / 10**3)
 
     @property
     def within_grid(self):

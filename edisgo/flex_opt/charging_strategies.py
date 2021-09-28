@@ -4,6 +4,8 @@ import pandas as pd
 from math import cos
 
 from edisgo import EDisGo
+from datetime import timedelta
+
 
 COLUMNS = {
     "integrated_charging_parks_df": ["edisgo_id"],
@@ -36,7 +38,7 @@ def integrate_charging_parks(edisgo_obj, comp_type="ChargingPoint"):
         [0] * len(edisgo_obj.timeseries.timeindex), index=edisgo_obj.timeseries.timeindex)
 
     # integrate ChargingPoints and save the names of the eDisGo ID
-    edisgo_id = [
+    edisgo_ids = [
         EDisGo.integrate_component(
             edisgo_obj,
             comp_type=comp_type,
@@ -50,7 +52,7 @@ def integrate_charging_parks(edisgo_obj, comp_type="ChargingPoint"):
     ]
 
     edisgo_obj.electromobility.integrated_charging_parks_df = pd.DataFrame(
-        columns=COLUMNS["integrated_charging_parks_df"], data=edisgo_id, index=charging_park_ids)
+        columns=COLUMNS["integrated_charging_parks_df"], data=edisgo_ids, index=charging_park_ids)
 
 # TODO: the dummy timeseries should be as long as the simulated days and not the timeindex of the edisgo object
 # At the moment this would result into wrong results if the timeindex of the edisgo object is
@@ -88,7 +90,7 @@ def charging_strategy(
 
     """
     def harmonize_charging_processes_df(
-            df, timestamp_share_threshold, strategy=None, minimum_charging_capacity_factor=0.1, eta_cp=1.0):
+            df, len_ts, timestamp_share_threshold, strategy=None, minimum_charging_capacity_factor=0.1, eta_cp=1.0):
         """
         Harmonizes the charging processes to prevent differences in the energy
         demand per charging strategy.
@@ -97,6 +99,8 @@ def charging_strategy(
         ----------
         df : :pandas:`pandas.DataFrame<DataFrame>`
             Charging processes DataFrame
+        len_ts : int
+            Length of the timeseries
         timestamp_share_threshold : float
             See description in the main function. Default 0.2
         strategy : str
@@ -107,8 +111,12 @@ def charging_strategy(
             Charging Point efficiency. Default 1.0
 
         """
-        # SimBEV has a MATLAB legacy and at the moment 1 is eDisGos 0
+        # FIXME: SimBEV has a MATLAB legacy and at the moment 1 is eDisGos 0
         df = df.assign(park_start=df.park_start-1)
+
+        # FIXME: This should become obsolete in the future when SimBEV is bugfixed
+        # drop rows that have a park start higher than simulated days
+        df = df.loc[df.park_start <= len_ts]
 
         # calculate the minimum time taken the fulfill the charging demand
         minimum_charging_time = df.chargingdemand/df.netto_charging_capacity \
@@ -213,10 +221,10 @@ def charging_strategy(
     edisgo_timedelta = edisgo_obj.timeseries.timeindex[1] - edisgo_obj.timeseries.timeindex[0]
     simbev_timedelta = timeindex[1] - timeindex[0]
 
-    assert edisgo_timedelta == simbev_timedelta, f"""
-        The stepsize of the timeseries of the edisgo object differs from the simbev stepsize. 
-        The edisgo timedelta is {edisgo_timedelta}, while the simbev timedelta is {simbev_timedelta}. 
-        Make sure to use a matching stepsize."""
+    assert edisgo_timedelta == simbev_timedelta, (
+        "The stepsize of the timeseries of the edisgo object differs from the simbev stepsize. " 
+        f"The edisgo timedelta is {edisgo_timedelta}, while the simbev timedelta is {simbev_timedelta}. " 
+        "Make sure to use a matching stepsize.")
 
     if strategy == "dumb":
         # "dumb" charging
@@ -224,7 +232,7 @@ def charging_strategy(
             dummy_ts = np.zeros(len_ts)
 
             charging_processes_df = harmonize_charging_processes_df(
-                cp.charging_processes_df, timestamp_share_threshold, strategy=strategy, eta_cp=eta_cp)
+                cp.charging_processes_df, len_ts, timestamp_share_threshold, strategy=strategy, eta_cp=eta_cp)
 
             for _, row in charging_processes_df.iterrows():
                 dummy_ts[row["park_start"]:row["park_start"] + row["minimum_charging_time"]] += \
@@ -239,7 +247,7 @@ def charging_strategy(
             dummy_ts = np.zeros(len_ts)
 
             charging_processes_df = harmonize_charging_processes_df(
-                cp.charging_processes_df, timestamp_share_threshold, strategy=strategy,
+                cp.charging_processes_df, len_ts, timestamp_share_threshold, strategy=strategy,
                 minimum_charging_capacity_factor=minimum_charging_capacity_factor, eta_cp=eta_cp)
 
             for _, row in charging_processes_df.iterrows():
@@ -263,26 +271,33 @@ def charging_strategy(
                 edisgo_obj.electromobility.integrated_charging_parks_df.index)]
 
         charging_processes_df = harmonize_charging_processes_df(
-                charging_processes_df, timestamp_share_threshold, strategy=strategy, eta_cp=eta_cp)
+                charging_processes_df, len_ts, timestamp_share_threshold, strategy=strategy, eta_cp=eta_cp)
 
         # get residual load
         init_residual_load = edisgo_obj.timeseries.residual_load
 
-        dummy_ts = pd.DataFrame(
-            data=0., columns=[_.id for _ in charging_parks], index=timeindex)
+        len_residual_load = int(charging_processes_df.park_end.max())
 
-        if len(init_residual_load) >= len_ts:
+        if len(init_residual_load) >= len_residual_load:
             init_residual_load = init_residual_load.loc[timeindex]
         else:
-            while len(init_residual_load) < len_ts:
+            while len(init_residual_load) < len_residual_load:
                 len_rl = len(init_residual_load)
-                len_append = min(len_rl, len_ts-len_rl)
+                len_append = min(len_rl, len_residual_load-len_rl)
 
                 s_append = init_residual_load.iloc[:len_append]
 
-                init_residual_load = init_residual_load.append(s_append)
+                init_residual_load = init_residual_load.append(
+                    s_append, ignore_index=True)
 
         init_residual_load = init_residual_load.to_numpy()
+
+        timeindex_residual = pd.date_range(
+            edisgo_obj.timeseries.timeindex[0], periods=len(init_residual_load),
+            freq=f"{edisgo_obj.electromobility.stepsize}min")
+
+        dummy_ts = pd.DataFrame(
+            data=0., columns=[_.id for _ in charging_parks], index=timeindex_residual)
 
         # determine which charging processes can be flexibilized
         dumb_charging_processes_df = charging_processes_df.loc[
@@ -295,11 +310,22 @@ def charging_strategy(
 
         # perform dumb charging processes and respect them in the residual load
         for _, row in dumb_charging_processes_df.iterrows():
-            dummy_ts.loc[:, row["charging_park_id"]].iloc[
-                row["park_start"]:row["park_start"] + row["minimum_charging_time"]
-            ] += row["netto_charging_capacity_mva"]
+            try:
+                dummy_ts.loc[:, row["charging_park_id"]].iloc[
+                    row["park_start"]:row["park_start"] + row["minimum_charging_time"]
+                ] += row["netto_charging_capacity_mva"]
+            except:
+                park_start = row["park_start"]
+                park_end = row["park_start"] + row["minimum_charging_time"]
+                maximum_ts = len(dummy_ts)
+                logger.warning(
+                    (f"Charging process with index {_} could not be respected. "
+                     f"The park start is at timestep {park_start} and the park end is "
+                     f"at timestep {park_end}, while the timeseries consists of {maximum_ts}"
+                     "timesteps."))
 
-        residual_load = init_residual_load + dummy_ts.sum(axis=1).to_numpy()
+        residual_load = init_residual_load + dummy_ts.sum(
+            axis=1).to_numpy()
 
         for _, row in flex_charging_processes_df.iterrows():
             flex_band = residual_load[row["park_start"]:row["park_end"]]
@@ -309,17 +335,25 @@ def charging_strategy(
             # get k time steps with the lowest residual load in the parking time
             idx = np.argpartition(flex_band, k)[:k] + row["park_start"]
 
-            dummy_ts[row["charging_park_id"]].iloc[idx] += \
-                row["netto_charging_capacity_mva"]
+            try:
+                dummy_ts[row["charging_park_id"]].iloc[idx] += \
+                    row["netto_charging_capacity_mva"]
 
-            residual_load[idx] += row["netto_charging_capacity_mva"]
+                residual_load[idx] += row["netto_charging_capacity_mva"]
+
+            except:
+                logger.warning(
+                    (f"Charging process with index {_} could not be respected. "
+                     f"The charging takes place within the timesteps {idx}, "
+                     f"while the timeseries consists of {maximum_ts} timesteps."))
 
         for count, col in enumerate(dummy_ts.columns):
             _overwrite_active_power_timeseries(
                 edisgo_obj, charging_parks[count].edisgo_id, dummy_ts[col])
 
     else:
-        raise ValueError(f"Strategy {strategy} has not yet been implemented.")
+        raise ValueError(
+            f"Strategy {strategy} has not yet been implemented.")
 
     logging.info(f"Charging strategy {strategy} completed.")
 

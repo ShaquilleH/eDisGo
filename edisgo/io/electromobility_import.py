@@ -66,7 +66,8 @@ PUBLIC_DESTINATIONS = {
 }
 
 
-def import_simbev_electromobility(path, edisgo_obj, **kwargs):
+def import_simbev_electromobility(
+        path, edisgo_obj, **kwargs):
     """
 
     Parameters
@@ -88,7 +89,7 @@ def import_simbev_electromobility(path, edisgo_obj, **kwargs):
                 and the total number of cars. Default 0.1 .
             gc_to_car_rate_hpc : float
                 Specifies the minimum rate between possible grid connections points for the use case "hpc"
-                and the total number of cars. As default 1 HPC grid Connection is guaranteed.
+                and the total number of cars. Default 0.005 .
             mode_parking_times : str
                 If the mode_parking_times is set to "frugal" only parking times with any charging demand
                 are imported. Default "frugal".
@@ -102,19 +103,19 @@ def import_simbev_electromobility(path, edisgo_obj, **kwargs):
     """
     # TODO: SimBEV is in development and this import will need constant updating for now
     def read_csvs_charging_processes(
-            path, mode="frugal", dir=None):
+            csv_path, mode="frugal", csv_dir=None):
         """
         Reads all CSVs in a given path and returns a DataFrame with all
         `SimBEV <https://github.com/rl-institut/simbev>`_ charging processes.
 
         Parameters
         ----------
-        path : str
+        csv_path : str
             Main path holding SimBEV output data
         mode : str
             Returns all information if None. Returns only rows with charging demand
             greater than 0 if "frugal". Default is "frugal".
-        dir : str
+        csv_dir : str
             Optional sub-directory holding charging processes CSVs under path
 
         Returns
@@ -125,17 +126,17 @@ def import_simbev_electromobility(path, edisgo_obj, **kwargs):
             charging point ID.
 
         """
-        if dir is not None:
-            path = os.path.join(path, dir)
+        if csv_dir is not None:
+            csv_path = os.path.join(csv_path, csv_dir)
 
         files = []
 
-        for dirpath, dirnames, filenames in os.walk(path):
+        for dirpath, dirnames, filenames in os.walk(csv_path):
             files.extend(Path(os.path.join(dirpath, f)) for f in filenames if f.endswith(".csv"))
 
         if len(files) == 0:
             raise ValueError(
-                "Couldn't find any CSVs in path {}.".format(path)
+                "Couldn't find any CSVs in path {}.".format(csv_path)
             )
 
         files.sort()
@@ -145,29 +146,31 @@ def import_simbev_electromobility(path, edisgo_obj, **kwargs):
         charging_processes_df = charging_processes_df.astype(DTYPES["charging_processes_df"])
 
         for car_id, f in enumerate(files):
-            df = pd.read_csv(f, index_col=[0])
+            try:
+                df = pd.read_csv(f, index_col=[0])
 
-            if mode == "frugal":
-                df = df.loc[df.chargingdemand > 0]
-            else:
-                pass
+                if mode == "frugal":
+                    df = df.loc[df.chargingdemand > 0]
+                else:
+                    pass
 
-            df = df.rename(columns={"location": "destination"})
+                df = df.rename(columns={"location": "destination"})
 
-            df = df.assign(ags=int(f.parts[-2]), car_id=car_id)
+                df = df.assign(ags=int(f.parts[-2]), car_id=car_id)
 
-            df = df[COLUMNS["charging_processes_df"]].astype(DTYPES["charging_processes_df"])
+                df = df[COLUMNS["charging_processes_df"]].astype(DTYPES["charging_processes_df"])
 
-            charging_processes_df = charging_processes_df.append(
-                df, ignore_index=True,
-            )
+                charging_processes_df = charging_processes_df.append(
+                    df, ignore_index=True,
+                )
+            except:
+                logger.warning(
+                    f"File {f} couldn't be read and is skipped.")
 
         charging_processes_df = pd.merge(
             charging_processes_df,
             pd.DataFrame(columns=COLUMNS["matching_demand_and_location"]),
-            how="outer",
-            left_index=True,
-            right_index=True
+            how="outer", left_index=True, right_index=True
         )
 
         return charging_processes_df
@@ -287,7 +290,7 @@ def import_simbev_electromobility(path, edisgo_obj, **kwargs):
             elif use_case == "public":
                 gc_to_car_rate = kwargs.get("gc_to_car_rate_public", 0.1)
             elif use_case == "hpc":
-                gc_to_car_rate = kwargs.get("gc_to_car_rate_hpc", 1/num_cars)
+                gc_to_car_rate = kwargs.get("gc_to_car_rate_hpc", 0.005)
 
             use_case_gdf = grid_connections_gdf.loc[
                 grid_connections_gdf.use_case == use_case]
@@ -362,7 +365,7 @@ def import_simbev_electromobility(path, edisgo_obj, **kwargs):
 
     edisgo_obj.electromobility.charging_processes_df = read_csvs_charging_processes(
         path, mode=kwargs.pop("mode_parking_times", "frugal"),
-        dir=kwargs.pop("charging_processes_dir", "simbev_run")
+        csv_dir=kwargs.pop("charging_processes_dir", "simbev_run")
     )
 
     edisgo_obj.electromobility.simbev_config_df = read_csv_simbev_config(

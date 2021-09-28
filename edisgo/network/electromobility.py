@@ -12,8 +12,8 @@ logger = logging.getLogger("edisgo")
 
 COLUMNS = {
     "charging_processes_df": [
-        "location", "use_case", "netto_charging_capacity", "chargingdemand", "park_start",
-        "park_end", "charging_park_id", "charging_point_id"
+        "ags", "car_id", "destination", "use_case", "netto_charging_capacity",
+        "chargingdemand", "park_start", "park_end"
     ],
     "grid_connections_gdf": ["id", "use_case", "user_centric_weight", "geometry"],
     "simbev_config_df": ["value"],
@@ -229,18 +229,23 @@ class Electromobility:
 
         if os.path.exists(os.path.join(directory, "grid_connections.csv")):
             epsg = edisgo_obj.topology.grid_district["srid"]
+
+            grid_connections_df = pd.read_csv(
+                    os.path.join(directory, "grid_connections.csv"), index_col=0)
+
+            grid_connections_df = grid_connections_df.assign(
+                geometry=gpd.GeoSeries.from_wkt(grid_connections_df["geometry"]))
+
             try:
                 self.grid_connections_gdf = gpd.GeoDataFrame(
-                    pd.read_csv(
-                        os.path.join(directory, "grid_connections.csv"), index_col=0), crs={"init": f"epsg:{epsg}"})
+                    grid_connections_df, geometry="geometry", crs={"init": f"epsg:{epsg}"})
             except:
                 logging.warning(
                     f"""Grid connections could not be loaded with EPSG {epsg}.
                     Trying with EPSG 4326 as fallback.""")
 
                 self.grid_connections_gdf = gpd.GeoDataFrame(
-                    pd.read_csv(
-                        os.path.join(directory, "grid_connections.csv"), index_col=0), crs={"init": "epsg:4326"})
+                    grid_connections_df, geometry="geometry", crs={"init": "epsg:4326"})
 
         if os.path.exists(os.path.join(directory, "integrated_charging_parks.csv")):
             self.integrated_charging_parks_df = pd.read_csv(
