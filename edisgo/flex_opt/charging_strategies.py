@@ -1,6 +1,7 @@
 import logging
 import numpy as np
 import pandas as pd
+from math import cos
 
 from edisgo import EDisGo
 
@@ -55,7 +56,8 @@ def integrate_charging_parks(edisgo_obj, comp_type="ChargingPoint"):
 # At the moment this would result into wrong results if the timeindex of the edisgo object is
 # not continuously (e.g. 2 weeks of the year)
 def charging_strategy(
-        edisgo_obj, strategy="dumb", timestamp_share_threshold=0.2, minimum_charging_capacity_factor=0.1):
+        edisgo_obj, strategy="dumb", timestamp_share_threshold=0.2, minimum_charging_capacity_factor=0.1,
+        reactive_power_strategy=None):
     """
     Calculates the timeseries per charging park if parking times are given.
 
@@ -172,7 +174,7 @@ def charging_strategy(
 
         return df
 
-    def _overwrite_timeseries(edisgo_obj, edisgo_id, ts):
+    def _overwrite_active_power_timeseries(edisgo_obj, edisgo_id, ts):
         """
         Overwrites the dummy timeseries for the Charging Point
 
@@ -198,7 +200,7 @@ def charging_strategy(
     ts = pd.Series(data=0, index=edisgo_obj.timeseries.timeindex)
 
     for cp in charging_parks:
-        _overwrite_timeseries(edisgo_obj, cp.edisgo_id, ts)
+        _overwrite_active_power_timeseries(edisgo_obj, cp.edisgo_id, ts)
 
     eta_cp = edisgo_obj.electromobility.eta_charging_points
 
@@ -228,7 +230,7 @@ def charging_strategy(
                 dummy_ts[row["park_start"]:row["park_start"] + row["minimum_charging_time"]] += \
                     row["netto_charging_capacity_mva"]
 
-            _overwrite_timeseries(
+            _overwrite_active_power_timeseries(
                 edisgo_obj, cp.edisgo_id, pd.Series(data=dummy_ts, index=timeindex))
 
     elif strategy == "reduced":
@@ -250,7 +252,7 @@ def charging_strategy(
                     dummy_ts[row["park_start"]:row["park_start"] + row["reduced_charging_time"]] += \
                         row["reduced_charging_capacity_mva"]
 
-            _overwrite_timeseries(
+            _overwrite_active_power_timeseries(
                 edisgo_obj, cp.edisgo_id, pd.Series(data=dummy_ts, index=timeindex))
 
     elif strategy == "residual":
@@ -313,10 +315,42 @@ def charging_strategy(
             residual_load[idx] += row["netto_charging_capacity_mva"]
 
         for count, col in enumerate(dummy_ts.columns):
-            _overwrite_timeseries(
+            _overwrite_active_power_timeseries(
                 edisgo_obj, charging_parks[count].edisgo_id, dummy_ts[col])
 
     else:
         raise ValueError(f"Strategy {strategy} has not yet been implemented.")
 
     logging.info(f"Charging strategy {strategy} completed.")
+
+    if reactive_power_strategy == "fixed_cos":
+        edisgo_obj.timeseries._charging_points_reactive_power = edisgo_obj.timeseries.charging_points_active_power * 0.4843221048
+
+    elif reactive_power_strategy == "cos_P":
+        def cos_P_headcurve(x):
+            return (-(3.9)*x)+2.95
+        cos_P = edisgo_obj.timeseries.charging_points_active_power
+        mask = (cos_P / edisgo_obj.topology.charging_points_df.loc[cos_P.columns,"p_nom"]) <= 0.5
+        cos_P[mask] = 0
+        cos_P=cos_P.apply(cos_P_headcurve)
+
+   # elif reactive_power_strategy == "Q_U":
+    #    relevant_v_res = edisgo_obj.results.v_res[edisgo_obj.topology.charging_points_df.bus]
+     #   relevant_v_res = relevant_v_res - 1
+      #  Q_faktor = relevant_v_res * 0.33 / 0.04
+       # Q_faktor = Q_faktor.clip(upper=0.33, lower=-0.33)
+
+    #elif reactive_power_strategy == "Q_U":
+    #    def Q_U_headcurve(x):
+    #        return (8.25*x)-8.25
+     #   Q_U = edisgo_obj.timeseries.charging_points_active_power #TODO richtigen Pfad einsetzen
+    #    mask = (Q_U / edisgo_obj.topology.charging_points_df.loc[cos_P.columns,"p_nom"]) <= 0.5 #TODO größer -0.33, kleiner 0.33
+    #    Q_U[mask] = 0
+     #   Q_U=Q_U.apply(Q_U_headcurve)
+
+
+
+        print("break")
+
+
+
