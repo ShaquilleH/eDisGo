@@ -1,7 +1,8 @@
 import logging
+import math
+
 import numpy as np
 import pandas as pd
-from math import cos
 
 from edisgo import EDisGo
 from datetime import timedelta
@@ -59,7 +60,7 @@ def integrate_charging_parks(edisgo_obj, comp_type="ChargingPoint"):
 # not continuously (e.g. 2 weeks of the year)
 def charging_strategy(
         edisgo_obj, strategy="dumb", timestamp_share_threshold=0.2, minimum_charging_capacity_factor=0.1,
-        reactive_power_strategy=None):
+        reactive_power_strategy=None, max_iterations=1):
     """
     Calculates the timeseries per charging park if parking times are given.
 
@@ -226,17 +227,59 @@ def charging_strategy(
         f"The edisgo timedelta is {edisgo_timedelta}, while the simbev timedelta is {simbev_timedelta}. " 
         "Make sure to use a matching stepsize.")
 
+
     if strategy == "dumb":
         # "dumb" charging
         for cp in charging_parks:
             dummy_ts = np.zeros(len_ts)
 
+
+
+
             charging_processes_df = harmonize_charging_processes_df(
                 cp.charging_processes_df, len_ts, timestamp_share_threshold, strategy=strategy, eta_cp=eta_cp)
 
-            for _, row in charging_processes_df.iterrows():
-                dummy_ts[row["park_start"]:row["park_start"] + row["minimum_charging_time"]] += \
-                    row["netto_charging_capacity_mva"]
+            if reactive_power_strategy == "cos_P":
+                reactive_power_dummy_ts = np.zeros(len_ts)
+                #        def cos_p_headcurve(x):
+                #            return (-(0.2)*x)+1.1
+                #
+                #        def q_factor_from_cos_p(cos_p):
+                #            return np.tan(np.arccos(cos_p))
+                #
+                #        charging_points_active_power = edisgo_obj.timeseries.charging_points_active_power
+                #
+                #        p_nom_utilisation = charging_points_active_power / edisgo_obj.topology.charging_points_df.loc[
+                #            charging_points_active_power.columns, "p_nom"].astype("float")
+                #
+                #        cos_p = p_nom_utilisation.apply(cos_p_headcurve).clip(
+                #            upper=1., lower=0.9)#
+                #
+                #        q_factor = cos_p.apply(q_factor_from_cos_p)
+                #
+                #        edisgo_obj.timeseries._charging_points_reactive_power = \
+                #            charging_points_active_power * q_factor * (-1)
+                #Überlegung: Formel muss ja trotzdem eingegeben werden damit das Programm überhaupt
+                #weiß was es in dem Fall machen muss
+
+                for _, row in charging_processes_df.iterrows():
+                    dummy_ts[row["park_start"]:row["park_start"] + row["minimum_charging_time"]] += \
+                        row["netto_charging_capacity_mva"]
+                    #Verstehe nicht ganz was in diesem Step passiert
+
+    #Fixed_cos auch hier reinnehmen?
+    #        elif reactive_power_strategy == "fixed_cos":
+    #            def q_factor_from_cos_p(cos_p):
+    #                return math.tan(math.acos(cos_p))
+    #
+    #            edisgo_obj.timeseries._charging_points_reactive_power = \
+    #                edisgo_obj.timeseries.charging_points_active_power * q_factor_from_cos_p(0.9) * (-1)
+
+            else:
+                for _, row in charging_processes_df.iterrows():
+                    dummy_ts[row["park_start"]:row["park_start"] + row["minimum_charging_time"]] += \
+                        row["netto_charging_capacity_mva"]
+
 
             _overwrite_active_power_timeseries(
                 edisgo_obj, cp.edisgo_id, pd.Series(data=dummy_ts, index=timeindex))
@@ -250,15 +293,19 @@ def charging_strategy(
                 cp.charging_processes_df, len_ts, timestamp_share_threshold, strategy=strategy,
                 minimum_charging_capacity_factor=minimum_charging_capacity_factor, eta_cp=eta_cp)
 
-            for _, row in charging_processes_df.iterrows():
-                if row["use_case"] == "public":
-                    # if the charging process takes place in a "public" setting
-                    # the charging is "dumb"
-                    dummy_ts[row["park_start"]:row["park_start"] + row["minimum_charging_time"]] += \
-                        row["netto_charging_capacity_mva"]
-                else:
-                    dummy_ts[row["park_start"]:row["park_start"] + row["reduced_charging_time"]] += \
-                        row["reduced_charging_capacity_mva"]
+            if reactive_power_strategy == "cos_P":
+                reactive_power_dummy_ts = np.zeros(len_ts)
+                #An der Stelle wieder Kennlinei cos_P
+
+                for _, row in charging_processes_df.iterrows():
+                    if row["use_case"] == "public":
+                        # if the charging process takes place in a "public" setting
+                        # the charging is "dumb"
+                        dummy_ts[row["park_start"]:row["park_start"] + row["minimum_charging_time"]] += \
+                            row["netto_charging_capacity_mva"]
+                    else:
+                        dummy_ts[row["park_start"]:row["park_start"] + row["reduced_charging_time"]] += \
+                            row["reduced_charging_capacity_mva"]
 
             _overwrite_active_power_timeseries(
                 edisgo_obj, cp.edisgo_id, pd.Series(data=dummy_ts, index=timeindex))
@@ -358,15 +405,63 @@ def charging_strategy(
     logging.info(f"Charging strategy {strategy} completed.")
 
     if reactive_power_strategy == "fixed_cos":
-        edisgo_obj.timeseries._charging_points_reactive_power = edisgo_obj.timeseries.charging_points_active_power * 0.4843221048
+        def q_factor_from_cos_p(cos_p):
+            return math.tan(math.acos(cos_p))
 
-    elif reactive_power_strategy == "cos_P":
-        def cos_P_headcurve(x):
-            return (-(3.9)*x)+2.95
-        cos_P = edisgo_obj.timeseries.charging_points_active_power
-        mask = (cos_P / edisgo_obj.topology.charging_points_df.loc[cos_P.columns,"p_nom"]) <= 0.5
-        cos_P[mask] = 0
-        cos_P=cos_P.apply(cos_P_headcurve)
+        edisgo_obj.timeseries._charging_points_reactive_power = \
+            edisgo_obj.timeseries.charging_points_active_power * q_factor_from_cos_p(0.9) * (-1)
+
+
+    if reactive_power_strategy == "Q_U":
+        charging_points_active_power = edisgo_obj.timeseries.charging_points_active_power
+        buses = edisgo_obj.topology.charging_points_df.loc[
+            charging_points_active_power.columns].bus
+
+        i = 0
+
+        while charging_points_active_power < and i < max_iterations:
+            edisgo_obj.analyze(
+                use_seed=True)
+        relevant_v_res = edisgo_obj.results.v_res[buses] - 1
+        Q_faktor = relevant_v_res * 0.33 / 0.04
+        Q_faktor = Q_faktor.clip(upper=0.33, lower=-0.33)
+        edisgo_obj.timeseries._charging_points_reactive_power = \
+            charging_points_active_power * Q_faktor.to_numpy()
+
+        i+- 1
+
+
+        print("break")
+
+
+    #Als nächstes erneut .analyze ausführen und Differenz zwischen beiden ermitteln
+
+
+#    if reactive_power_strategy = "Q_U":
+#        edisgo_obj.results.v_res.analyze()
+
+#    elif reactive_power_strategy == "cos_P":
+#        def cos_p_headcurve(x):
+#            return (-(0.2)*x)+1.1
+#
+#        def q_factor_from_cos_p(cos_p):
+#            return np.tan(np.arccos(cos_p))
+#
+#        charging_points_active_power = edisgo_obj.timeseries.charging_points_active_power
+#
+#        p_nom_utilisation = charging_points_active_power / edisgo_obj.topology.charging_points_df.loc[
+#            charging_points_active_power.columns, "p_nom"].astype("float")
+#
+#        cos_p = p_nom_utilisation.apply(cos_p_headcurve).clip(
+#            upper=1., lower=0.9)#
+#
+#        q_factor = cos_p.apply(q_factor_from_cos_p)
+#
+#        edisgo_obj.timeseries._charging_points_reactive_power = \
+#            charging_points_active_power * q_factor * (-1)
+#Zwischenpunkt cos_P
+
+        # edisgo_obj.timeseries._charging_points_reactive_power =
 
    # elif reactive_power_strategy == "Q_U":
     #    relevant_v_res = edisgo_obj.results.v_res[edisgo_obj.topology.charging_points_df.bus]
@@ -377,14 +472,18 @@ def charging_strategy(
     #elif reactive_power_strategy == "Q_U":
     #    def Q_U_headcurve(x):
     #        return (8.25*x)-8.25
-     #   Q_U = edisgo_obj.timeseries.charging_points_active_power #TODO richtigen Pfad einsetzen
-    #    mask = (Q_U / edisgo_obj.topology.charging_points_df.loc[cos_P.columns,"p_nom"]) <= 0.5 #TODO größer -0.33, kleiner 0.33
+     #   Q_U = edisgo_obj.timeseries.charging_points_reactive_power #TODO richtigen Pfad einsetzen
+    #    mask = (Q_U / edisgo_obj.topology.charging_points_df.loc[cos_P.columns,"p_nom"]) <= 0.5 größer -0.33, kleiner 0.33
     #    Q_U[mask] = 0
      #   Q_U=Q_U.apply(Q_U_headcurve)
 
+#    elif ractive_power_strategy == "Q_U":
+ #       if edisgo_obj.timeseries._charging_points_reactive_power / edisgo_obj.topology.charging_points_df.bus = 0.33
+  #
+   #
+    #    elif
+     #Für alle drei Stufen der Kennlinie einzeln schreiben
 
-
-        print("break")
 
 
 
