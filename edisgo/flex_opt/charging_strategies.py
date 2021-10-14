@@ -1,5 +1,6 @@
 import logging
 import math
+import os
 
 import numpy as np
 import pandas as pd
@@ -60,7 +61,7 @@ def integrate_charging_parks(edisgo_obj, comp_type="ChargingPoint"):
 # not continuously (e.g. 2 weeks of the year)
 def charging_strategy(
         edisgo_obj, strategy="dumb", timestamp_share_threshold=0.2, minimum_charging_capacity_factor=0.1,
-        reactive_power_strategy=None, max_iterations=1):
+        reactive_power_strategy=None, max_iterations=2):
     """
     Calculates the timeseries per charging park if parking times are given.
 
@@ -419,16 +420,17 @@ def charging_strategy(
 
         i = 0
 
-        while charging_points_active_power < and i < max_iterations:
+        while i < max_iterations:
             edisgo_obj.analyze(
                 use_seed=True)
-        relevant_v_res = edisgo_obj.results.v_res[buses] - 1
-        Q_faktor = relevant_v_res * 0.33 / 0.04
-        Q_faktor = Q_faktor.clip(upper=0.33, lower=-0.33)
-        edisgo_obj.timeseries._charging_points_reactive_power = \
-            charging_points_active_power * Q_faktor.to_numpy()
+            relevant_v_res = edisgo_obj.results.v_res[buses] - 1
+            Q_faktor = relevant_v_res * 0.33 / 0.04
+            Q_faktor = Q_faktor.clip(upper=0.33, lower=-0.33)
+            edisgo_obj.timeseries._charging_points_reactive_power = \
+                charging_points_active_power * Q_faktor.to_numpy()
 
-        i+- 1
+            i+- 1
+
 
 
         print("break")
