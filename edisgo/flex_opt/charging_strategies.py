@@ -16,6 +16,20 @@ COLUMNS = {
 logger = logging.getLogger("edisgo")
 
 
+def cos_p_headcurve(p,voltage_level):
+    if voltage_level == "lv":
+        cos_p = (-(0.1) * p) + 1.05
+        return max(min(1,cos_p),0.95)
+
+    else:
+        cos_p = (-(0.2) * p) + 1.1
+        return max(min(1,cos_p),0.9)
+
+
+def q_factor_from_cos_p(cos_p):
+    return np.tan(np.arccos(cos_p))
+
+
 def integrate_charging_parks(edisgo_obj, comp_type="ChargingPoint"):
     """
     Integrates all designated charging parks into the grid. The charging demand is
@@ -200,6 +214,11 @@ def charging_strategy(
         edisgo_obj.timeseries._charging_points_active_power.loc[:, edisgo_id] = \
             ts.loc[edisgo_obj.timeseries.timeindex]
 
+    def _overwrite_reactive_power_timeseries(edisgo_obj, edisgo_id, ts):
+
+        edisgo_obj.timeseries._charging_points_reactive_power.loc[:, edisgo_id] = \
+            ts.loc[edisgo_obj.timeseries.timeindex]
+
     # get integrated charging parks
     charging_parks = [
         cp for cp in list(edisgo_obj.electromobility.potential_charging_parks)
@@ -234,39 +253,33 @@ def charging_strategy(
         for cp in charging_parks:
             dummy_ts = np.zeros(len_ts)
 
-
-
-
             charging_processes_df = harmonize_charging_processes_df(
                 cp.charging_processes_df, len_ts, timestamp_share_threshold, strategy=strategy, eta_cp=eta_cp)
 
             if reactive_power_strategy == "cos_P":
                 reactive_power_dummy_ts = np.zeros(len_ts)
-                #        def cos_p_headcurve(x):
-                #            return (-(0.2)*x)+1.1
-                #
-                #        def q_factor_from_cos_p(cos_p):
-                #            return np.tan(np.arccos(cos_p))
-                #
-                #        charging_points_active_power = edisgo_obj.timeseries.charging_points_active_power
-                #
-                #        p_nom_utilisation = charging_points_active_power / edisgo_obj.topology.charging_points_df.loc[
-                #            charging_points_active_power.columns, "p_nom"].astype("float")
-                #
-                #        cos_p = p_nom_utilisation.apply(cos_p_headcurve).clip(
-                #            upper=1., lower=0.9)#
-                #
-                #        q_factor = cos_p.apply(q_factor_from_cos_p)
-                #
-                #        edisgo_obj.timeseries._charging_points_reactive_power = \
-                #            charging_points_active_power * q_factor * (-1)
-                #Überlegung: Formel muss ja trotzdem eingegeben werden damit das Programm überhaupt
-                #weiß was es in dem Fall machen muss
 
                 for _, row in charging_processes_df.iterrows():
                     dummy_ts[row["park_start"]:row["park_start"] + row["minimum_charging_time"]] += \
                         row["netto_charging_capacity_mva"]
-                    #Verstehe nicht ganz was in diesem Step passiert
+
+                    cos_p = cos_p_headcurve(row["netto_charging_capacity"],cp.voltage_level)
+
+                    q_faktor = q_factor_from_cos_p(cos_p)
+
+                    reactive_power_dummy_ts[row["park_start"]:row["park_start"] + row["minimum_charging_time"]] -= \
+                        (row["netto_charging_capacity_mva"] * q_faktor)
+
+                _overwrite_reactive_power_timeseries(
+                    edisgo_obj, cp.edisgo_id, pd.Series(data=reactive_power_dummy_ts, index=timeindex))
+
+            else:
+                for _, row in charging_processes_df.iterrows():
+                    dummy_ts[row["park_start"]:row["park_start"] + row["minimum_charging_time"]] += \
+                        row["netto_charging_capacity_mva"]
+
+            _overwrite_active_power_timeseries(
+                edisgo_obj, cp.edisgo_id, pd.Series(data=dummy_ts, index=timeindex))
 
     #Fixed_cos auch hier reinnehmen?
     #        elif reactive_power_strategy == "fixed_cos":
@@ -276,14 +289,6 @@ def charging_strategy(
     #            edisgo_obj.timeseries._charging_points_reactive_power = \
     #                edisgo_obj.timeseries.charging_points_active_power * q_factor_from_cos_p(0.9) * (-1)
 
-            else:
-                for _, row in charging_processes_df.iterrows():
-                    dummy_ts[row["park_start"]:row["park_start"] + row["minimum_charging_time"]] += \
-                        row["netto_charging_capacity_mva"]
-
-
-            _overwrite_active_power_timeseries(
-                edisgo_obj, cp.edisgo_id, pd.Series(data=dummy_ts, index=timeindex))
 
     elif strategy == "reduced":
         # "reduced" charging
@@ -406,9 +411,6 @@ def charging_strategy(
     logging.info(f"Charging strategy {strategy} completed.")
 
     if reactive_power_strategy == "fixed_cos":
-        def q_factor_from_cos_p(cos_p):
-            return math.tan(math.acos(cos_p))
-
         edisgo_obj.timeseries._charging_points_reactive_power = \
             edisgo_obj.timeseries.charging_points_active_power * q_factor_from_cos_p(0.9) * (-1)
 
