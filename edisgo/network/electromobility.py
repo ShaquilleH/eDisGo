@@ -171,7 +171,7 @@ class Electromobility:
         try:
             return float(self.simbev_config_df.at["eta_CP", "value"])
         except:
-            return None
+            return 0.9
 
     def to_csv(self, directory):
         """

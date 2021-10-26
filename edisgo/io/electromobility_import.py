@@ -197,10 +197,6 @@ def import_simbev_electromobility(
 
         """
         try:
-            print(os.path.join(path, simbev_config_file))
-            df = pd.read_csv(
-                    os.path.join(path, simbev_config_file), index_col=[0], header=0, names=COLUMNS["simbev_config_df"])
-            print(df)
             if simbev_config_file is not None:
                 return pd.read_csv(
                     os.path.join(path, simbev_config_file), index_col=[0], header=0, names=COLUMNS["simbev_config_df"])
