@@ -60,6 +60,7 @@ setup(
         'pypower',
         'sklearn',
         'pydot',
+        'Rtree',
     ],
     extras_require={
         'geoplot': ['geopandas >= 0.9.0', 'contextily', 'descartes'],
