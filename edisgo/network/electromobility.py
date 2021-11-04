@@ -139,7 +139,7 @@ class Electromobility:
         try:
             return int(self.simbev_config_df.at["stepsize", "value"])
         except:
-            return None
+            return 15
 
     @property
     def simulated_days(self):
@@ -155,7 +155,7 @@ class Electromobility:
         try:
             return int(self.simbev_config_df.at["days", "value"])
         except:
-            return None
+            return 371
 
     @property
     def eta_charging_points(self):
