@@ -25,7 +25,6 @@ def cos_p_headcurve(p,voltage_level):
         cos_p = (-(0.2) * p) + 1.1
         return max(min(1,cos_p),0.9)
 
-
 def q_factor_from_cos_p(cos_p):
     return np.tan(np.arccos(cos_p))
 
@@ -33,8 +32,8 @@ def q_factor_from_cos_p(cos_p):
 def q_u_curve(v_res,
               curve_parameter={"end_upper": 1.1, "start_upper": 1.05,
                                "start_lower": 0.95, "end_lower": 0.9,
-                               "max_value": 1, "dead-band_value": 0,
-                               "min_value": -1}):
+                               "max_value": math.tan(math.acos(0.9)), "dead-band_value": 0,
+                               "min_value": -(math.tan(math.acos(0.9)))}):
     curve_q_set_in_percentage = np.select(
         [(v_res > curve_parameter["end_upper"]),
          (v_res <= curve_parameter["end_upper"]) &
@@ -53,7 +52,10 @@ def q_u_curve(v_res,
          (v_res - curve_parameter["start_lower"]) /
          (curve_parameter["end_lower"] - curve_parameter["start_lower"]),
          curve_parameter["min_value"]])
+    return curve_q_set_in_percentage
 
+# Q(U) max iterations
+MAX_ITERATIONS = 50
 THRESHOLD = 5
 
 
@@ -309,6 +311,16 @@ def charging_strategy(
             _overwrite_active_power_timeseries(
                 edisgo_obj, cp.edisgo_id, pd.Series(data=dummy_ts, index=timeindex))
 
+
+            if reactive_power_strategy == "fixed_cos":
+                reactive_power_dummy_ts = np.zeros(len_ts)
+
+                edisgo_obj.timeseries._charging_points_reactive_power = \
+                edisgo_obj.timeseries.charging_points_active_power * q_factor_from_cos_p(0.9) * (-1)
+
+                _overwrite_reactive_power_timeseries(
+                    edisgo_obj, cp.edisgo_id, pd.Series(data=reactive_power_dummy_ts, index=timeindex))
+
     #Fixed_cos auch hier reinnehmen?
     #        elif reactive_power_strategy == "fixed_cos":
     #            def q_factor_from_cos_p(cos_p):
@@ -440,34 +452,46 @@ def charging_strategy(
 
     if reactive_power_strategy == "fixed_cos":
         edisgo_obj.timeseries._charging_points_reactive_power = \
-            edisgo_obj.timeseries.charging_points_active_power * q_factor_from_cos_p(0.9) * (-1)
+            edisgo_obj.timeseries.charging_points_active_power * q_factor_from_cos_p(0.95) * (-1)
 
+# Unterschiedliche fixed_cos für Lasten:
+
+    # if reactive_power_strategy == "fixed_cos95":
+    #     edisgo_obj.timeseries._loads_reactive_power = \
+    #         edisgo_obj.timeseries.loads_active_power * q_factor_from_cos_p(0.95) * (-1)
+    #
+    # if reactive_power_strategy == "fixed_cos97":
+    #     edisgo_obj.timeseries._loads_reactive_power = \
+    #         edisgo_obj.timeseries.loads_active_power * q_factor_from_cos_p(0.97) * (-1)
+    #
+    # if reactive_power_strategy == "fixed_cos99":
+    #     edisgo_obj.timeseries._loads_reactive_power = \
+    #         edisgo_obj.timeseries.loads_active_power * q_factor_from_cos_p(0.99) * (-1)
+
+# Ende unterschiedliche fix_cos
 
     if reactive_power_strategy == "Q_U":
         charging_points_active_power = edisgo_obj.timeseries.charging_points_active_power
-        buses = edisgo_obj.topology.charging_points_df.loc[
-            charging_points_active_power.columns].bus
+        buses = edisgo_obj.topology.charging_points_df.loc[charging_points_active_power.columns].bus
         edisgo_obj.analyze(
             use_seed=True)
         i = 0
 
         while i < max_iterations:
-            v_res = edisgo_obj.results.v_res[buses] - 1
-            p_nom_utilisation = edisgo_obj.topology.charging_points_df.loc[
-                charging_points_active_power.columns, "p_nom"].astype("float")
+            v_res = edisgo_obj.results.v_res[buses]
+            # p_nom_utilisation = edisgo_obj.topology.charging_points_df.loc[
+            #     charging_points_active_power.columns, "p_nom"].astype("float")
+            #edisgo_obj.timeseries._charging_points_reactive_power = q_u_curve(v_res)*0.9
+            charging_points_df = edisgo_obj.topology.charging_points_df
+            charging_points_ts_df = buses.to_frame().merge(right=v_res.T, left_on="bus", right_index=True).drop(columns=["bus"]).T
+            #oder mit Q=tan(phi)*P
+            #square root, import math:
+            edisgo_obj.timeseries._charging_points_reactive_power = charging_points_active_power * q_u_curve(charging_points_ts_df)
 
 
+            #Werte werden hier überschrieben  wie in den
+            #anderen strategies (reactive power werte)
 
-
-        #Denke es gibt bei der Q(U)-Regelung keine Unterscheidung in MV,LV
-        #nur bei der cos(phi) Regelung gibt es die
-
-        # if p_nom_utilisation < 0.3:
-        #     curve_q_set_in_percentage*0.95
-        #
-        #
-        # elif p_nom_utilisation >= 0.3:
-        #     curve_q_set_in_percentage*0.9
 
             edisgo_obj.analyze(
             use_seed=True)
@@ -489,25 +513,25 @@ def charging_strategy(
 
 
 
-        if reactive_power_strategy == "cos_P":
-            # def cos_p_headcurve(x):
-            #     return (-(0.2) * x) + 1.1
-            #
-            # def q_factor_from_cos_p(cos_p):
-            #     return np.tan(np.arccos(cos_p))
-
-            charging_points_active_power = edisgo_obj.timeseries.charging_points_active_power
-
-            p_nom_utilisation2 = charging_points_active_power / edisgo_obj.topology.charging_points_df.loc[
-                charging_points_active_power.columns, "p_nom"].astype("float")
-
-            cos_p = p_nom_utilisation2.apply(cos_p_headcurve).clip(
-                upper=1., lower=0.9)  #
-
-            q_factor = cos_p.apply(q_factor_from_cos_p)
-
-            edisgo_obj.timeseries._charging_points_reactive_power = \
-                charging_points_active_power * q_factor * (-1)
+        # if reactive_power_strategy == "cos_P":
+        #     # def cos_p_headcurve(x):
+        #     #     return (-(0.2) * x) + 1.1
+        #     #
+        #     # def q_factor_from_cos_p(cos_p):
+        #     #     return np.tan(np.arccos(cos_p))
+        #
+        #     charging_points_active_power = edisgo_obj.timeseries.charging_points_active_power
+        #
+        #     p_nom_utilisation2 = charging_points_active_power / edisgo_obj.topology.charging_points_df.loc[
+        #         charging_points_active_power.columns, "p_nom"].astype("float")
+        #
+        #     cos_p = p_nom_utilisation2.apply(cos_p_headcurve).clip(
+        #         upper=1., lower=0.9)  #
+        #
+        #     q_factor = cos_p.apply(q_factor_from_cos_p)
+        #
+        #     edisgo_obj.timeseries._charging_points_reactive_power = \
+        #         charging_points_active_power * q_factor * (-1)
 
             print("break")
 
@@ -519,64 +543,3 @@ def charging_strategy(
             #     charging_points_active_power * Q_faktor.to_numpy()
             #
             # i+= 1
-
-    # Q(U)-Kennlinie Fredo:
-    # def q_u_curve(v_res,
-    #               curve_parameter={"end_upper": 1.1, "start_upper": 1.05,
-    #                                "start_lower": 0.95, "end_lower": 0.9,
-    #                                "max_value": 1, "dead-band_value": 0,
-    #                                "min_value": -1}):
-    #
-    # curve_q_set_in_percentage = np.select(
-    #     [(v_res > curve_parameter["end_upper"]),
-    #      (v_res <= curve_parameter["end_upper"]) &
-    #      (v_res >= curve_parameter["start_upper"]),
-    #      (v_res < curve_parameter["start_upper"]) &
-    #      (v_res >= curve_parameter["start_lower"]),
-    #      (v_res < curve_parameter["start_lower"]) &
-    #      (v_res >= curve_parameter["end_lower"]),
-    #      (v_res < curve_parameter["end_lower"])],
-    #     [curve_parameter["max_value"],
-    #      curve_parameter["max_value"] - curve_parameter["max_value"] /
-    #      (curve_parameter["start_upper"] - curve_parameter["end_upper"]) *
-    #      (v_res - curve_parameter["end_upper"]),
-    #      curve_parameter["dead-band_value"],
-    #      curve_parameter["min_value"] *
-    #      (v_res - curve_parameter["start_lower"]) /
-    #      (curve_parameter["end_lower"] - curve_parameter["start_lower"]),
-    #      curve_parameter["min_value"]])
-
-    #Als nächstes erneut .analyze ausführen und Differenz zwischen beiden ermitteln
-
-
-   # if reactive_power_strategy = "Q_U":
-   #     edisgo_obj.results.v_res.analyze()
-
-#Zwischenpunkt cos_P
-
-        # edisgo_obj.timeseries._charging_points_reactive_power =
-
-   # elif reactive_power_strategy == "Q_U":
-    #    relevant_v_res = edisgo_obj.results.v_res[edisgo_obj.topology.charging_points_df.bus]
-     #   relevant_v_res = relevant_v_res - 1
-      #  Q_faktor = relevant_v_res * 0.33 / 0.04
-       # Q_faktor = Q_faktor.clip(upper=0.33, lower=-0.33)
-
-    #elif reactive_power_strategy == "Q_U":
-    #    def Q_U_headcurve(x):
-    #        return (8.25*x)-8.25
-     #   Q_U = edisgo_obj.timeseries.charging_points_reactive_power #TODO richtigen Pfad einsetzen
-    #    mask = (Q_U / edisgo_obj.topology.charging_points_df.loc[cos_P.columns,"p_nom"]) <= 0.5 größer -0.33, kleiner 0.33
-    #    Q_U[mask] = 0
-     #   Q_U=Q_U.apply(Q_U_headcurve)
-
-#    elif ractive_power_strategy == "Q_U":
- #       if edisgo_obj.timeseries._charging_points_reactive_power / edisgo_obj.topology.charging_points_df.bus = 0.33
-  #
-   #
-    #    elif
-     #Für alle drei Stufen der Kennlinie einzeln schreiben
-
-
-
-
